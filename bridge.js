@@ -1,5 +1,6 @@
 /* =====================================================================
-   MediScan  <->  OneGlance bridge          v1.0.0
+   MediScan  <->  OneGlance bridge          v1.1.0
+   (v1.1 adds SET_KEY: the extension supplies the Gemini API key)
    ---------------------------------------------------------------------
    Drop this in at the very END of MediScan's index.html, just before
    </body>:
@@ -52,6 +53,36 @@
 
   /* ---------- context received from the EMR ---------- */
   var lastContext = null;
+  var keyApplied = false;
+
+  /* ---------- API key supplied by the extension ----------
+     MediScan's safeStorage cannot persist a key in this frame: Chrome
+     blocks localStorage / sessionStorage / cookies for cross-site iframes,
+     so it silently falls back to an in-memory copy that dies on reload.
+     The extension keeps the key in chrome.storage.sync instead and types
+     it into MediScan's own field here, on every load. No app code changes. */
+  function applyApiKey(key) {
+    if (!key) return false;
+    var input = $('apiKey');
+    if (!input) return false;
+
+    input.value = key;
+    // Let MediScan's own 'input' listener update its status line
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    // Press its Save Key button so its normal path runs. That write will
+    // not survive a reload here — which is fine, we re-supply it each time.
+    var btn = $('saveKeyBtn');
+    if (btn) { try { btn.click(); } catch (e) {} }
+
+    // Collapse the config panel: with a key present it is just clutter.
+    var details = $('apiConfigDetails');
+    if (details) { try { details.removeAttribute('open'); } catch (e) {} }
+
+    keyApplied = true;
+    say('KEY_SET', { ok: true, version: '1.1.0', masked: key.length > 8 ? key.slice(0, 6) + '…' + key.slice(-4) : 'set' });
+    return true;
+  }
 
   /* Show a slim, unobtrusive banner naming the patient so the doctor can
      see at a glance which visit the analysis belongs to. Uses MediScan's
@@ -130,6 +161,14 @@
       });
       if (!files.length) { state('Nothing was sent to analyse.', 'err'); busy = false; return; }
 
+      // A reload can land between SET_KEY and ANALYSE — make sure the field
+      // is still populated before we spend time preparing pages.
+      var keyField = $('apiKey');
+      if (keyField && !keyField.value.trim() && !keyApplied) {
+        say('ERROR', { message: 'No Gemini API key. Add one in the extension Options, then press ↻ Analyse.' });
+        busy = false; return;
+      }
+
       state('Loading ' + files.length + ' file(s) into the analyser…', 'busy', 84);
 
       /* clear whatever the previous patient left behind */
@@ -194,7 +233,9 @@
   window.addEventListener('message', function (ev) {
     var d = ev.data;
     if (!d || d.source !== 'oneglance-bridge') return;
-    if (d.type === 'ANALYSE') {
+    if (d.type === 'SET_KEY') {
+      applyApiKey(d.payload && d.payload.apiKey);
+    } else if (d.type === 'ANALYSE') {
       if (d.payload && d.payload.autoAnalyse === false) {
         lastContext = d.payload.context || null;
         if (lastContext) showContextBanner(lastContext);
@@ -203,12 +244,12 @@
       }
       runAnalysis(d.payload || {});
     } else if (d.type === 'PING') {
-      say('READY', { version: '1.0.0' });
+      say('READY', { version: '1.1.0' });
     }
   });
 
   /* ---------- announce ---------- */
-  function announce() { say('READY', { version: '1.0.0' }); }
+  function announce() { say('READY', { version: '1.1.0' }); }
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
     setTimeout(announce, 60);
   } else {
@@ -218,5 +259,5 @@
   // panel is never left waiting if it attached late.
   setTimeout(announce, 1200);
 
-  console.log(TAG, 'active');
+  console.log(TAG, 'active — v1.1.0 (SET_KEY supported)');
 })();
