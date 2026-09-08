@@ -5173,6 +5173,51 @@ OUTPUT FORMAT — USE EXACT TAGS BELOW:
     });
   }
 
+  /* ---------- capture MediScan's own API diagnostics ----------
+     MediScan logs every failed model attempt as
+       console.warn("Key[0] gemini-x failed (400): <Google's message>")
+     but then collapses all of them into one generic banner. Keeping the
+     raw lines lets the panel report what Google actually said, instead of
+     the app's guess about what it meant. */
+  var apiLog = [];
+  (function () {
+    var _warn = console.warn;
+    console.warn = function () {
+      try {
+        var line = Array.prototype.join.call(arguments, ' ');
+        if (/Key\[\d+\]|generativelanguage|gemini/i.test(line)) {
+          apiLog.push(line);
+          if (apiLog.length > 24) apiLog.shift();
+        }
+      } catch (e) {}
+      return _warn.apply(console, arguments);
+    };
+  })();
+
+  /** Turn the captured attempts into one honest sentence. */
+  function diagnoseApi() {
+    if (!apiLog.length) return null;
+    var statuses = {}, msgs = [];
+    apiLog.forEach(function (l) {
+      var m = l.match(/failed \((\d{3})\):\s*(.*)$/);
+      if (m) { statuses[m[1]] = (statuses[m[1]] || 0) + 1; msgs.push(m[2]); }
+    });
+    var codes = Object.keys(statuses);
+    var first = msgs[0] || '';
+    var out = { codes: codes, message: first, log: apiLog.slice(-8) };
+
+    if (codes.indexOf('404') !== -1 && codes.indexOf('400') === -1 && codes.indexOf('403') === -1) {
+      out.verdict = 'MODEL_MISSING';
+    } else if (/API key not valid|API_KEY_INVALID/i.test(msgs.join(' '))) {
+      out.verdict = 'KEY_REALLY_INVALID';
+    } else if (codes.indexOf('429') !== -1) {
+      out.verdict = 'RATE_LIMIT';
+    } else {
+      out.verdict = 'OTHER';
+    }
+    return out;
+  }
+
   /* ---------- context received from the EMR ---------- */
   var lastContext = null;
   var keyApplied = false;
@@ -5202,7 +5247,7 @@ OUTPUT FORMAT — USE EXACT TAGS BELOW:
     if (details) { try { details.removeAttribute('open'); } catch (e) {} }
 
     keyApplied = true;
-    say('KEY_SET', { ok: true, version: '1.1.4', masked: key.length > 8 ? key.slice(0, 6) + '…' + key.slice(-4) : 'set' });
+    say('KEY_SET', { ok: true, version: '1.1.6', masked: key.length > 8 ? key.slice(0, 6) + '…' + key.slice(-4) : 'set' });
     return true;
   }
 
@@ -5351,7 +5396,27 @@ OUTPUT FORMAT — USE EXACT TAGS BELOW:
       if (finished === 'error') {
         var raw = (statusEl && statusEl.textContent) || 'MediScan reported an error.';
         var page = document.body ? (document.body.innerText || '') : '';
-        if (/invalid or revoked|API key not valid|API Key Invalid/i.test(raw + ' ' + page)) {
+        var diag = diagnoseApi();
+
+        if (diag && diag.verdict === 'MODEL_MISSING') {
+          // The app blames the key, but Google only said the model name is
+          // unknown. Report what actually happened.
+          say('ERROR', {
+            code: 'MODEL_MISSING',
+            message: 'The API key is fine — Google does not recognise the model names this build asks for. ' +
+                     'Google said: "' + String(diag.message).slice(0, 160) + '"',
+            detail: diag.log
+          });
+        } else if (diag && diag.verdict === 'KEY_REALLY_INVALID') {
+          say('ERROR', { code: 'BAD_KEY',
+            message: 'Google rejected the API key. Open Options, paste a current key and press Test.',
+            detail: diag.log });
+        } else if (diag && diag.verdict === 'OTHER') {
+          say('ERROR', { code: 'API_OTHER',
+            message: 'Gemini refused the request (HTTP ' + diag.codes.join('/') + '): ' +
+                     String(diag.message).slice(0, 200),
+            detail: diag.log });
+        } else if (/invalid or revoked|API key not valid|API Key Invalid/i.test(raw + ' ' + page)) {
           say('ERROR', {
             code: 'BAD_KEY',
             message: 'Google rejected the API key. Open the extension Options, ' +
@@ -5397,12 +5462,12 @@ OUTPUT FORMAT — USE EXACT TAGS BELOW:
       }
       runAnalysis(d.payload || {});
     } else if (d.type === 'PING') {
-      say('READY', { version: '1.1.4' });
+      say('READY', { version: '1.1.6' });
     }
   });
 
   /* ---------- announce ---------- */
-  function announce() { say('READY', { version: '1.1.4' }); }
+  function announce() { say('READY', { version: '1.1.6' }); }
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
     setTimeout(announce, 60);
   } else {
@@ -5412,7 +5477,7 @@ OUTPUT FORMAT — USE EXACT TAGS BELOW:
   // panel is never left waiting if it attached late.
   setTimeout(announce, 1200);
 
-  console.log(TAG, 'active — v1.1.4 (SET_KEY supported)');
+  console.log(TAG, 'active — v1.1.6 (SET_KEY supported)');
 })();
 
 </script>
