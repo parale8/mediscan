@@ -5202,7 +5202,7 @@ OUTPUT FORMAT — USE EXACT TAGS BELOW:
     if (details) { try { details.removeAttribute('open'); } catch (e) {} }
 
     keyApplied = true;
-    say('KEY_SET', { ok: true, version: '1.1.3', masked: key.length > 8 ? key.slice(0, 6) + '…' + key.slice(-4) : 'set' });
+    say('KEY_SET', { ok: true, version: '1.1.4', masked: key.length > 8 ? key.slice(0, 6) + '…' + key.slice(-4) : 'set' });
     return true;
   }
 
@@ -5295,8 +5295,10 @@ OUTPUT FORMAT — USE EXACT TAGS BELOW:
       });
       if (!files.length) { state('Nothing was sent to analyse.', 'err'); busy = false; return; }
 
-      // A reload can land between SET_KEY and ANALYSE — make sure the field
-      // is still populated before we spend time preparing pages.
+      // Re-apply the key every run: MediScan wipes its saved copy whenever
+      // Google rejects one, so the next run would otherwise start empty.
+      if (heldKey) applyApiKey(heldKey);
+
       var keyField = $('apiKey');
       if (keyField && !keyField.value.trim() && !keyApplied) {
         say('ERROR', { message: 'No Gemini API key. Add one in the extension Options, then press ↻ Analyse.' });
@@ -5347,7 +5349,20 @@ OUTPUT FORMAT — USE EXACT TAGS BELOW:
       }, 300000, 700);
 
       if (finished === 'error') {
-        say('ERROR', { message: (statusEl && statusEl.textContent) || 'MediScan reported an error.' });
+        var raw = (statusEl && statusEl.textContent) || 'MediScan reported an error.';
+        var page = document.body ? (document.body.innerText || '') : '';
+        if (/invalid or revoked|API key not valid|API Key Invalid/i.test(raw + ' ' + page)) {
+          say('ERROR', {
+            code: 'BAD_KEY',
+            message: 'Google rejected the API key. Open the extension Options, ' +
+                     'paste a current key and press "Test this key against Gemini".'
+          });
+        } else if (/quota|rate limit|429/i.test(raw + ' ' + page)) {
+          say('ERROR', { code: 'RATE_LIMIT',
+            message: 'The API key is valid but its quota is exhausted. It will work again once the quota resets.' });
+        } else {
+          say('ERROR', { message: raw });
+        }
       } else if (finished === 'done') {
         var n = files.length;
         say('DONE', { message: 'Analysed ' + n + ' page(s). Doctor Report ready.' });
@@ -5363,12 +5378,16 @@ OUTPUT FORMAT — USE EXACT TAGS BELOW:
     }
   }
 
+  /* Remember the key the extension gave us so every run can re-apply it. */
+  var heldKey = '';
+
   /* ---------- inbound messages ---------- */
   window.addEventListener('message', function (ev) {
     var d = ev.data;
     if (!d || d.source !== 'oneglance-bridge') return;
     if (d.type === 'SET_KEY') {
-      applyApiKey(d.payload && d.payload.apiKey);
+      heldKey = (d.payload && d.payload.apiKey) || '';
+      applyApiKey(heldKey);
     } else if (d.type === 'ANALYSE') {
       if (d.payload && d.payload.autoAnalyse === false) {
         lastContext = d.payload.context || null;
@@ -5378,12 +5397,12 @@ OUTPUT FORMAT — USE EXACT TAGS BELOW:
       }
       runAnalysis(d.payload || {});
     } else if (d.type === 'PING') {
-      say('READY', { version: '1.1.3' });
+      say('READY', { version: '1.1.4' });
     }
   });
 
   /* ---------- announce ---------- */
-  function announce() { say('READY', { version: '1.1.3' }); }
+  function announce() { say('READY', { version: '1.1.4' }); }
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
     setTimeout(announce, 60);
   } else {
@@ -5393,7 +5412,7 @@ OUTPUT FORMAT — USE EXACT TAGS BELOW:
   // panel is never left waiting if it attached late.
   setTimeout(announce, 1200);
 
-  console.log(TAG, 'active — v1.1.3 (SET_KEY supported)');
+  console.log(TAG, 'active — v1.1.4 (SET_KEY supported)');
 })();
 
 </script>
