@@ -3821,9 +3821,7 @@
                 content.classList.remove('hidden');
                 content.querySelectorAll('.hidden').forEach(el => el.classList.remove('hidden'));
                 const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>MediScan</title></head><body style='background:#fff;color:#111;font-family:Arial,sans-serif;padding:30px;'>";
-                const footer = "    <!-- OneGlance EMR integration -->
-    <script src="bridge.js"></script>
-</body></html>";
+                const footer = "</body></html>";
                 const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(header + content.outerHTML + footer);
                 const a = document.createElement('a');
                 document.body.appendChild(a);
@@ -5137,8 +5135,7 @@ OUTPUT FORMAT — USE EXACT TAGS BELOW:
             }
         });
     </script>
-    <!-- OneGlance EMR integration -->
-    <script src="bridge.js"></script>
+<script src="bridge.js"></script>
 </body>
 
 </html>
